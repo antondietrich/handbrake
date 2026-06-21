@@ -1,0 +1,17 @@
+{
+    "configurations": [
+        {
+            "name": "Upload Hex",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "internalConsole",
+            "preLaunchTask": "upload-avr"
+        }
+    ],
+    "version": "2.0.0"
+}

@@ -1,0 +1,30 @@
+{
+  "configurations": [
+    {
+      "name": "Win32",
+        "includePath": [
+        "${workspaceFolder}/../../avr8-gnu-toolchain-win32_x86_64/avr/include",
+        "${workspaceFolder}/../../avr8-gnu-toolchain-win32_x86_64/include",
+        "${workspaceFolder}/Config",
+        "${workspaceFolder}/src"
+      ],
+      "defines": [ 
+        "__AVR_ATmega32U4__",
+        "F_CPU=16000000UL",
+        "F_USB=16000000UL",
+        "USB_CAN_BE_DEVICE",
+        "USB_SERIES_4_AVR",
+        "DEBUG=1"
+      ],
+      "compilerPath": "${workspaceFolder}/../../avr8-gnu-toolchain-win32_x86_64/bin/avr-gcc",
+      "intelliSenseMode": "windows-gcc-x64",
+      //"cStandard": "c17",
+      //"cppStandard": "c++17",
+      //"intelliSenseMode": "linux-gcc-x64" // adjust per OS
+      "compilerArgs": [
+        "-mmcu=atmega32u4"
+      ]
+    }
+  ],
+  "version": 4
+}
