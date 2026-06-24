@@ -27,6 +27,15 @@ enum class DescriptorType : u8
     OTHER                   = 0x07,
     INTERFACE_POWER         = 0x08,
     //INTERFACE_ASSOCIATION   = 0x0B
+    HID                     = 0x21,
+    HID_REPORT              = 0x22,
+};
+
+enum class StandardFeature : u8
+{
+    ENDPOINT_HALT           = 0, // recipient = ep
+    DEVICE_REMOTE_WAKEUP    = 1, // recipient = device
+    TEST_MODE               = 2 // recipient = device
 };
 
 struct PACKED DeviceDescriptor
@@ -75,6 +84,51 @@ struct PACKED InterfaceDescriptor
     u8 interfaceSubclass;
     u8 interfaceProtocol;
     u8 strIndexDescription;
+};
+
+enum class EPATTR_TransferType : u8
+{
+    Control = 0b00,
+    Isochronous = 0b01,
+    Bulk = 0b10,
+    Interrupt = 0b11
+};
+
+enum class EPATTR_SynchronizationType : u8
+{
+    NoSynchronization = 0b00,
+    Asynchronous = 0b01,
+    Adaptive = 0b10,
+    Synchronous = 0b11
+};
+
+enum class EPATTR_UsageType : u8
+{
+    Data = 0b00,
+    Feedback = 0b01,
+    ImplicitFeedback = 0b10
+};
+
+struct PACKED EndpointDescriptor
+{
+    u8 size;
+    DescriptorType type;
+    u8 address; // b7: 0 = OUT, 1 = IN; b6..4: reserved; b3..0: EP number
+    u8 attributes; // b7..6: reserved; b5..4: usage type; b3..2: synchronization type; b1..0: transfer type
+    u16 maxPacketSize; // b12..11: additional transactions, b10..0: size
+    u8 pollingInterval; // in 1ms frames for full-speed
+};
+
+struct PACKED HIDDescriptor
+{
+    u8 size;
+    DescriptorType type;
+    u16 specVersion;
+    u8 countryCode;
+    u8 numClassDescriptors; // at least Report
+    u8 classDescriptorType;
+    u16 classDescriptorSize;
+    /* Optional descriptors omitted */
 };
 
 #define LANGUAGE_ID_ENG 0x0409
@@ -127,11 +181,27 @@ enum class SetupRequestCode : u8
 #define REQUEST_ATTR_RECEPIENT_ENDPOINT         0b00000010
 #define REQUEST_ATTR_RECEPIENT_OTHER            0b00000011
 
-struct USBSetupRequest
+#define REQUEST_INDEX_ENDPOINT_DIRECTION_MASK   0b10000000
+#define REQUEST_INDEX_ENDPOINT_DIRECTION_OUT    0b00000000
+#define REQUEST_INDEX_ENDPOINT_DIRECTION_IN     0b10000000
+#define REQUEST_INDEX_ENDPOINT_NUMBER_MASK      0b00001111
+#define REQUEST_INDEX_INTERFACE_NUMBER_MASK     0b11111111
+
+enum class DataDirection : u8
+{
+    OUT = 0,
+    IN = 1
+};
+
+#define GET_REQUEST_DATA_DIRECTION(attr)    ((DataDirection)((attr & REQUEST_ATTR_DATA_DIRECTION_MASK) >> 7))
+#define GET_REQUEST_EP_DIRECTION(index)     ((DataDirection)((index & REQUEST_INDEX_ENDPOINT_DIRECTION_MASK) >> 7))
+#define GET_REQUEST_EP_NUMBER(index)        ((u8)(index & REQUEST_INDEX_ENDPOINT_NUMBER_MASK))
+
+struct PACKED USBSetupRequest
 {
     u8  attributes; // bitmask of REQUEST_ATTR
-    SetupRequestCode  code;
+    u8  code;
     u16 value; // request-specific parameter
-    u16 index; // when ATTRT_RECEPIENT is interface or endpoint, specifies the index of the I. or EP.
+    u16 index; // when ATTRT_RECEPIENT is interface or endpoint, specifies the index of the I. or EP. according to REQUEST_INDEX_
     u16 dataSize; // num bytes to send in the Data stage, 0 means no Data stage after this request
 };

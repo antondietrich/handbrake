@@ -27,6 +27,7 @@ void Led2On();
 #include "descriptors.cpp"
 #include "usb_endpoint.cpp"
 #include "usb_device.cpp"
+#include "handbrake.h"
 
 static u8 numSetupRequests = 0;
 
@@ -42,6 +43,10 @@ ISR(TIMER0_COMPA_vect)
 	if (millis % 1000 == 0)
 	{
 		++seconds;
+        if (seconds % 2 == 0)
+        {
+            Led1On();
+        }
 	}
 }
 
@@ -51,8 +56,6 @@ int main(void)
 {
 	SetupHardware();
 	USBInit();
-    //u8* read = (u8*)(&deviceDescriptor);
-    //DEBUG_OUT(read[3], true, true);
 
     Led1Off();
     Led2Off();
@@ -63,7 +66,7 @@ int main(void)
 
 	for (;;)
 	{
-#if DEBUG
+#if DEBUG && 1
         if (millis == led1time)
         {
             led1time = 0;
@@ -77,13 +80,26 @@ int main(void)
 #endif
 
 		USB_DeviceTask();
-        // TODO: process HID
+        if (gUSBState == USBDeviceState::CONFIGURED)
+        {
+            EP_SELECT(1);
+            if (EP_IS_IN_BANK_READY())
+            {
+                Led2On();
+                Report report;
+                report.brake = 0;
+                //EP_SendBuffer((u8*)&report, sizeof(Report));
+                EP_SendBuffer((u8*)&report, 1);
+            }
+        }
 
 		//ts = millis + 10;
 		//while (usbReady && millis < ts) USB_USBTask();
+        #if 1
 		ADCSRA |= _BV(ADSC); // start conversion, wait till it's 0 to complete
 		while (ADCSRA & _BV(ADSC));
 		hall = ADCH;
+        #endif
 	}
 }
 

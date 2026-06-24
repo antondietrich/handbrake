@@ -31,4 +31,6 @@ struct PACKED Configuration
 {
     ConfigurationDescriptor configDesc;
     InterfaceDescriptor interfaceDesc;
+    HIDDescriptor hidDescriptor;
+    EndpointDescriptor endpointDescriptor;
 };

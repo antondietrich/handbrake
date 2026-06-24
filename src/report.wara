@@ -1,0 +1,11 @@
+[[settings]]
+outputformat = 'Cpp'
+
+[[applicationCollection]]
+usage = ['Generic Desktop', 'Joystick']
+
+    [[applicationCollection.inputReport]]
+
+        [[applicationCollection.inputReport.variableItem]]
+        usage = ['Simulation Controls', 'Brake']
+        logicalValueRange = [0, 255]

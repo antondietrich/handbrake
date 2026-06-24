@@ -28,6 +28,9 @@ enum DEBUG_STAGE
     DEBUG_ERROR_USBE               = 57,
     DEBUG_ERROR_FRZCLK             = 58,
     DEBUG_ERROR_ATTACH             = 59,
+    DEBUG_ERROR_UNKNOWN_DESCR      = 60,
+    DEBUG_ERROR_INVALID_REQUEST    = 61,
+    DEBUG_ERROR_UNKNOWN_REQUEST    = 62,
 };
 
 u8 gDebugOutLatched = 0;
