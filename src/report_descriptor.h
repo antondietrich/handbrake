@@ -24,3 +24,14 @@ static const u8 PROGMEM hidReportDescriptor[] =
     0x81, 0x02,          //     Input(Data, Variable, Absolute, NoWrap, Linear, PreferredState, NoNullPosition, BitField)
     0xC0,                // EndCollection()
 };
+
+#pragma pack(push,1)
+
+#define HID_REPORT_INPUT1_ID (1)
+struct HidReportInput1
+{
+    uint8_t ReportId = HID_REPORT_INPUT1_ID;
+    uint8_t Payload[1];
+};
+
+#pragma pack(pop)

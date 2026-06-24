@@ -6,6 +6,7 @@
 
 #include "avr_common.h"
 #include "avr_debug.h"
+#include "avr_eeprom.h"
 #include "main.h"
 
 #if DEBUG
@@ -15,6 +16,8 @@ void Led1Off();
 void Led2Off();
 void Led1On();
 void Led2On();
+void Led1Blink();
+void Led2Blink();
 #else
 #define Led1Off()
 #define Led2Off()
@@ -22,20 +25,30 @@ void Led2On();
 #define Led2On()
 #endif
 
-
-
 #include "descriptors.cpp"
 #include "usb_endpoint.cpp"
 #include "usb_device.cpp"
 #include "handbrake.h"
 
+enum class State : u8
+{
+    STARTUP,
+    CALIBRATION,
+    USB
+};
+
+void EnterState(State newState);
+
+static State state = State::STARTUP;
+
 static u8 numSetupRequests = 0;
 
-u32 millis = 0;
-u32 seconds = 0;
-
-u8 hall = 0;
-
+static u32 millis = 0;
+static u32 seconds = 0;
+static u8 hall = 0;
+static u8 hallMin = 0;
+static u8 hallMax = 0;
+static u32 calibrationStartTime = 0;
 
 ISR(TIMER0_COMPA_vect)
 {
@@ -43,11 +56,28 @@ ISR(TIMER0_COMPA_vect)
 	if (millis % 1000 == 0)
 	{
 		++seconds;
-        if (seconds % 2 == 0)
+        if (state == State::CALIBRATION)
         {
-            Led1On();
+            Led2Blink();
         }
 	}
+
+    if (millis == led1time)
+    {
+        led1time = 0;
+        Led1Off();
+    }
+
+    if (millis == led2time)
+    {
+        led2time = 0;
+        Led2Off();
+    }
+}
+
+u8 AbsDistance(u8 a, u8 b)
+{
+    return a > b ? a - b : b - a;
 }
 
 u8 usbReady = 0;
@@ -55,58 +85,109 @@ u32 ts = 0;
 int main(void)
 {
 	SetupHardware();
-	USBInit();
 
     Led1Off();
     Led2Off();
     DEBUG_OUT(DEBUG_STAGE_START);
 
-    // TODO: lufa uses memory barriers here
+    u8 calibartionDone = EepromReadByte(E2ADDR_CALIBRATION_DONE);
+    if (calibartionDone != 1)
+    {
+        EnterState(State::CALIBRATION);
+    }
+    else
+    {
+        EnterState(State::USB);
+    }
+
+	//USBInit();
 	sei();
+
+    u32 now = 0;
+    u8 hallCount = 0;
+    u16 hallStartSum = 0;
 
 	for (;;)
 	{
-#if DEBUG && 1
-        if (millis == led1time)
+        if (state == State::CALIBRATION)
         {
-            led1time = 0;
-            Led1Off();
-        }
-        if (millis == led2time)
-        {
-            led2time = 0;
-            Led2Off();
-        }
-#endif
-
-		USB_DeviceTask();
-        if (gUSBState == USBDeviceState::CONFIGURED)
-        {
-            EP_SELECT(1);
-            if (EP_IS_IN_BANK_READY())
+            if (millis - calibrationStartTime > 5000)
             {
-                Led2On();
-                Report report;
-                report.brake = 0;
-                //EP_SendBuffer((u8*)&report, sizeof(Report));
-                EP_SendBuffer((u8*)&report, 1);
+                if (AbsDistance(hallMin, hallMax) > 64 || true)
+                {
+                    EepromWriteByte(1, E2ADDR_CALIBRATION_DONE);
+                    EepromWriteByte(hallMin, E2ADDR_HALL_MIN);
+                    EepromWriteByte(hallMax, E2ADDR_HALL_MAX);
+                    Led1Blink();
+                    EnterState(State::USB);
+                    continue;
+                }
+                else
+                {
+                    Led1On();
+                    Led2On();
+                    DEBUG_OUT(DEBUG_ERROR_CALIBRATION);
+                    cli();
+                    return 1;
+                }
+            }
+
+            ADCSRA |= _BV(ADSC); // start conversion, wait till it's 0 to complete
+            while (ADCSRA & _BV(ADSC));
+            hall = ADCH;
+
+            if (hallCount < 10)
+            {
+                hallStartSum += hall;
+                ++hallCount;
+            }
+            else if (hallCount == 10)
+            {
+                hallMin = hallStartSum / 10;
+                hallMax = hallMin;
+                ++hallCount;
+            }
+            else
+            {
+                if (AbsDistance(hall, hallMin) > AbsDistance(hallMax, hallMin))
+                {
+                    hallMax = hall;
+                }
             }
         }
+        else if (state == State::USB)
+        {
+            USB_DeviceTask();
+            if (gUSBState == USBDeviceState::CONFIGURED)
+            {
+                EP_SELECT(1);
+                if (EP_IS_IN_BANK_READY())
+                {
+                    Led2On();
+                    Report report;
+                    report.id = 1;
+                    report.brake = (u8)(((float)AbsDistance(hall, hallMin) / AbsDistance(hallMin, hallMax)) * 250);
+                    //report.x = 24;
+                    //report.y = 71;
+                    //report.buttons = 0b10101001;
+                    //EP_SendBuffer((u8*)&report, sizeof(Report));
+                    EP_SendBuffer((u8*)&report, 2);
+                    // TODO: send NAK if the report hasn't changed
+                }
 
-		//ts = millis + 10;
-		//while (usbReady && millis < ts) USB_USBTask();
-        #if 1
-		ADCSRA |= _BV(ADSC); // start conversion, wait till it's 0 to complete
-		while (ADCSRA & _BV(ADSC));
-		hall = ADCH;
-        #endif
+                ADCSRA |= _BV(ADSC); // start conversion, wait till it's 0 to complete
+                while (ADCSRA & _BV(ADSC));
+                hall = ADCH;
+
+            }
+        }
 	}
 }
 
 /** Configures the board hardware and chip peripherals for the demo's functionality. */
 void SetupHardware(void)
 {
-	/* Disable watchdog if enabled by bootloader/fuses */
+	/* Disable watchdog */
 	MCUSR &= ~(1 << WDRF);
 	wdt_disable();
 
@@ -167,12 +248,44 @@ void Led2Off()
 void Led1On() 
 {
 	PORTD &= ~(1 << PD5);
-    led1time = millis + 10;
 }
 
 void Led2On()
 {
 	PORTB &= ~(1 << PB0);
-    led2time = millis + 10;
+}
+
+void Led1Blink() 
+{
+	PORTD &= ~(1 << PD5);
+    led1time = millis + 50;
+}
+
+void Led2Blink()
+{
+	PORTB &= ~(1 << PB0);
+    led2time = millis + 50;
 }
 #endif
+
+void EnterState(State newState)
+{
+    if (state == newState)
+    {
+        return;
+    }
+
+    state = newState;
+
+    if (state == State::CALIBRATION)
+    {
+        calibrationStartTime = millis;
+    }
+    else if (state == State::USB)
+    {
+        hallMin = EepromReadByte(E2ADDR_HALL_MIN);
+        hallMax = EepromReadByte(E2ADDR_HALL_MAX);
+        Led2Blink();
+        USBInit();
+    }
+}

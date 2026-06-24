@@ -1,5 +1,6 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/sleep.h>
 #include "avr_common.h"
 #include "avr_debug.h"
 #include "usb_protocol.h"
@@ -62,19 +63,21 @@ static u8 gSelectedConfiguration = 0;
 static u8 gAddressPending = 0;
 static u8 gWasReset = 0;
 
+/* Unrecoverable error, will halt all further execution */
 void USBError(u8 err)
 {
-    // TODO: software interrupt maybe?
+    cli();
+
     if (gUSBState == USBDeviceState::ERROR)
     {
         return;
     }
-    USB_INTERRUPTS_OFF();
-    USB_INTERRUPTS_CLEAR();
     gUSBState = USBDeviceState::ERROR;
     DEBUG_OUT(err, true, true);
     Led1On();
     Led2On();
+    
+    sleep_mode(); // interrupts are disabled, will sleep until hardware reset
 }
 
 void USBInit()
