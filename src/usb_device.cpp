@@ -313,6 +313,12 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
             {
                 const u16 bytesToSend = Min(request.dataSize, descriptorSize);
                 EP0_SendBufferPgm(descriptorAddr, bytesToSend);
+                if (bytesToSend < request.dataSize && bytesToSend % 8 == 0)
+                {
+                    // Send ZLP if sending fewer bytes than requested and all packets were full
+                    while(!EP_IS_IN_BANK_READY());
+                    EP0_SEND_IN_PACKET();
+                }
                 result = RequestProcessResult::HANDLED;
             }
         } break;
