@@ -19,3 +19,4 @@ static inline void ak_memset(void *tgt, unsigned char val, unsigned int size)
 
 #define Min(a, b) ((a) <= (b) ? (a) : (b))
 #define Max(a, b) ((a) >= (b) ? (a) : (b))
+#define AbsDistance(a, b)  ((a) > (b) ? ((a) - (b)) : ((b) - (a)))

@@ -176,7 +176,7 @@ void EP1_SetHalt()
     EP_SELECT(ep);
 }
 
-bool EP1_GetHalt()
+bool EP1_IsHalted()
 {
     return gEP1Halt == 1;
 }

@@ -62,6 +62,7 @@ static USBDeviceState gUSBStateBeforeSuspend = USBDeviceState::NONE;
 static u8 gSelectedConfiguration = 0;
 static u8 gAddressPending = 0;
 static u8 gWasReset = 0;
+static u16 gHIDIdleTime = 0; // time in ms to repeat unchanged HID report
 
 /* Unrecoverable error, will halt all further execution */
 void USBError(u8 err)
@@ -216,7 +217,7 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
             }
             else if ((request.attributes & REQUEST_ATTR_RECEPIENT_MASK) == REQUEST_ATTR_RECEPIENT_ENDPOINT && request.index == REQUEST_INDEX_EP1)
             {
-                u16 epStatus = EP1_GetHalt() ? 1 : 0;
+                u16 epStatus = EP1_IsHalted() ? 1 : 0;
                 EP0_Send16(epStatus);
                 result = RequestProcessResult::HANDLED;
             }
@@ -285,9 +286,6 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
             u8 descriptorType = (request.value >> 8) & 0xff;
             u8 descriptorIndex = request.value & 0xff;
             u16 language = request.index;
-
-            // TODO: if request.dataSize > sizeof(Descriptor) and descriptor size is a multiple of packetSize, send an empty packet in the end
-            //if (gUSBState == USBDeviceState::DEFAULT || gUSBState == USBDeviceState::ADDRESSED || gUSBState == USBDeviceState::CONFIGURED)
 
             u16 descriptorSize = 0;
             const u8* descriptorAddr = 0;
@@ -360,7 +358,6 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
             // length: 0
             // DIRECTION: no data
             // RECEPIENT: device
-            // TODO: clear HALT
             if (GET_REQUEST_DATA_DIRECTION(request.attributes) != DataDirection::OUT)   { USBError(DEBUG_ERROR_INVALID_REQUEST); return RequestProcessResult::ERROR; }
 
             if (!EP1_Setup())       { USBError(DEBUG_ERROR_EP_SETUP); return RequestProcessResult::ERROR; }
@@ -368,6 +365,7 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
             
             gSelectedConfiguration = (u8)request.value;
             result = RequestProcessResult::HANDLED;
+            EP1_ClearHalt();
             gUSBState = USBDeviceState::CONFIGURED;
             DEBUG_OUT(DEBUG_STAGE_CONFIGURED);
         } break;
@@ -402,7 +400,6 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
 
         default:
         {
-            //USBError((u8)request.code);
             USBError(DEBUG_ERROR_UNKNOWN_REQUEST);
             result = RequestProcessResult::ERROR;
         } break;
@@ -413,8 +410,51 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
 
 RequestProcessResult USBProcessHIDRequest(const USBSetupRequest& request)
 {
+    RequestProcessResult result = RequestProcessResult::NOT_HANDLED;
     EP_CLEAR_SETUP_RECEIVED();
-    return RequestProcessResult::NOT_HANDLED;
+
+    switch (request.code)
+    {
+        case (u8)HIDRequestCode::GET_REPORT:
+        {
+            u8 reportType = request.value >> 8;
+            u8 reportId = request.value & 0xff;
+            Report report;
+            report.id = 1;
+            report.brake = 0;
+            EP0_SendBuffer((u8*)&report, sizeof(Report));
+
+            result = RequestProcessResult::HANDLED;
+        } break;
+
+        case (u8)HIDRequestCode::GET_IDLE:
+        {
+            if (GET_REQUEST_DATA_DIRECTION(request.attributes) != DataDirection::IN)   { USBError(DEBUG_ERROR_INVALID_REQUEST); return RequestProcessResult::ERROR; }
+            EP0_Send8(gHIDIdleTime >> 2);
+
+            result = RequestProcessResult::HANDLED;
+        } break;
+
+        case (u8)HIDRequestCode::SET_IDLE:
+        {
+            if (GET_REQUEST_DATA_DIRECTION(request.attributes) != DataDirection::OUT)   { USBError(DEBUG_ERROR_INVALID_REQUEST); return RequestProcessResult::ERROR; }
+
+            u8 duration = request.value >> 8;
+            u8 reportId = request.value & 0xff;
+            gHIDIdleTime = duration << 2;
+
+            result = RequestProcessResult::HANDLED;
+        } break;
+
+        case (u8)HIDRequestCode::SET_REPORT:
+        case (u8)HIDRequestCode::GET_PROTOCOL:
+        case (u8)HIDRequestCode::SET_PROTOCOL:
+        default:
+        {
+        } break;
+    }
+
+    return result;
 }
 
 static void USBProcessSetupRequest()

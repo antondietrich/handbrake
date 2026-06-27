@@ -29,6 +29,7 @@ enum class DescriptorType : u8
     //INTERFACE_ASSOCIATION   = 0x0B
     HID                     = 0x21,
     HID_REPORT              = 0x22,
+    HID_PHYSICAL            = 0x23,
 };
 
 enum class StandardFeature : u8
@@ -164,6 +165,23 @@ enum class SetupRequestCode : u8
     GET_INTERFACE       = 10, // value = 0; index = interface Idx
     SET_INTERFACE       = 11, // value = alternate index; index = interface Idx
     SYNCH_FRAME         = 12, // value = 0; index = endpoint; data = frame number
+};
+
+enum class HIDRequestCode : u8
+{
+    GET_REPORT          = 0x01,
+    GET_IDLE            = 0x02,
+    GET_PROTOCOL        = 0x03,
+    SET_REPORT          = 0x09,
+    SET_IDLE            = 0x0A,
+    SET_PROTOCOL        = 0x0B
+};
+
+enum class HIDReportType : u8
+{
+    INPUT               = 1,
+    OUTPUT              = 2,
+    FEATURE             = 3
 };
 
 #define REQUEST_ATTR_DATA_DIRECTION_MASK        0b10000000

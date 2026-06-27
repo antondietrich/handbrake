@@ -9,7 +9,6 @@
 #include "avr_eeprom.h"
 #include "main.h"
 
-#if DEBUG
 u32 led1time = 0;
 u32 led2time = 0;
 void Led1Off();
@@ -18,17 +17,11 @@ void Led1On();
 void Led2On();
 void Led1Blink();
 void Led2Blink();
-#else
-#define Led1Off()
-#define Led2Off()
-#define Led1On()
-#define Led2On()
-#endif
 
+#include "handbrake.h"
 #include "descriptors.cpp"
 #include "usb_endpoint.cpp"
 #include "usb_device.cpp"
-#include "handbrake.h"
 
 enum class State : u8
 {
@@ -39,16 +32,18 @@ enum class State : u8
 
 void EnterState(State newState);
 
-static State state = State::STARTUP;
-
-static u8 numSetupRequests = 0;
+static State handbrakeState = State::STARTUP;
 
 static u32 millis = 0;
 static u32 seconds = 0;
 static u8 hall = 0;
 static u8 hallMin = 0;
 static u8 hallMax = 0;
+static float hallRemapScale = 1;
 static u32 calibrationStartTime = 0;
+static u8 lastHall = 0;
+static u8 lastReportTime = 0;
+static u8 hallMinDeadzone = 1;
 
 ISR(TIMER0_COMPA_vect)
 {
@@ -56,7 +51,7 @@ ISR(TIMER0_COMPA_vect)
 	if (millis % 1000 == 0)
 	{
 		++seconds;
-        if (state == State::CALIBRATION)
+        if (handbrakeState == State::CALIBRATION)
         {
             Led2Blink();
         }
@@ -75,13 +70,6 @@ ISR(TIMER0_COMPA_vect)
     }
 }
 
-u8 AbsDistance(u8 a, u8 b)
-{
-    return a > b ? a - b : b - a;
-}
-
-u8 usbReady = 0;
-u32 ts = 0;
 int main(void)
 {
 	SetupHardware();
@@ -100,20 +88,18 @@ int main(void)
         EnterState(State::USB);
     }
 
-	//USBInit();
 	sei();
 
-    u32 now = 0;
     u8 hallCount = 0;
     u16 hallStartSum = 0;
 
 	for (;;)
 	{
-        if (state == State::CALIBRATION)
+        if (handbrakeState == State::CALIBRATION)
         {
             if (millis - calibrationStartTime > 5000)
             {
-                if (AbsDistance(hallMin, hallMax) > 64 || true)
+                if (AbsDistance(hallMin, hallMax) > 64)
                 {
                     EepromWriteByte(1, E2ADDR_CALIBRATION_DONE);
                     EepromWriteByte(hallMin, E2ADDR_HALL_MIN);
@@ -155,30 +141,51 @@ int main(void)
                 }
             }
         }
-        else if (state == State::USB)
+        else if (handbrakeState == State::USB)
         {
             USB_DeviceTask();
-            if (gUSBState == USBDeviceState::CONFIGURED)
+            if (gUSBState == USBDeviceState::CONFIGURED && !EP1_IsHalted())
             {
-                EP_SELECT(1);
-                if (EP_IS_IN_BANK_READY())
-                {
-                    Led2On();
-                    Report report;
-                    report.id = 1;
-                    report.brake = (u8)(((float)AbsDistance(hall, hallMin) / AbsDistance(hallMin, hallMax)) * 250);
-                    //report.x = 24;
-                    //report.y = 71;
-                    //report.buttons = 0b10101001;
-                    //EP_SendBuffer((u8*)&report, sizeof(Report));
-                    EP_SendBuffer((u8*)&report, 2);
-                    // TODO: send NAK if the report hasn't changed
-                }
-
                 ADCSRA |= _BV(ADSC); // start conversion, wait till it's 0 to complete
                 while (ADCSRA & _BV(ADSC));
                 hall = ADCH;
 
+                u8 reportChanged = 0;
+
+                if (hallMax > hallMin)
+                {
+                    hall = Max(hall, hallMin);
+                    hall = Min(hall, hallMax);
+                }
+                else
+                {
+                    hall = Min(hall, hallMin);
+                    hall = Max(hall, hallMax);
+                }
+
+                if (AbsDistance(hall, hallMin) < hallMinDeadzone && hall != hallMin)
+                {
+                    hall = hallMin;
+                    reportChanged = 1;
+                }
+                else
+                {
+                    reportChanged = AbsDistance(hall, lastHall) > 1;
+                }
+
+                if (reportChanged || (gHIDIdleTime > 0 && (millis - lastReportTime) > gHIDIdleTime))
+                {
+                    EP_SELECT(1); 
+                    while (!EP_IS_IN_BANK_READY());
+
+                    lastHall = hall;
+                    lastReportTime = millis;
+                    u8 brake = (u8)(AbsDistance(hall, hallMin) * hallRemapScale);
+                    Report report;
+                    report.id = 1;
+                    report.brake = brake;
+                    EP_SendBuffer((u8*)&report, sizeof(Report));
+                }
             }
         }
 	}
@@ -190,6 +197,8 @@ void SetupHardware(void)
 	/* Disable watchdog */
 	MCUSR &= ~(1 << WDRF);
 	wdt_disable();
+    USB_INTERRUPTS_CLEAR();
+    USB_INTERRUPTS_OFF();
 
 	/* Disable clock division */
 	clock_prescale_set(clock_div_1);
@@ -234,7 +243,6 @@ void SetupHardware(void)
 }
 
 
-#if DEBUG
 void Led1Off()
 {
 	PORTD |= (1 << PD5);
@@ -266,25 +274,25 @@ void Led2Blink()
 	PORTB &= ~(1 << PB0);
     led2time = millis + 50;
 }
-#endif
 
 void EnterState(State newState)
 {
-    if (state == newState)
+    if (handbrakeState == newState)
     {
         return;
     }
 
-    state = newState;
+    handbrakeState = newState;
 
-    if (state == State::CALIBRATION)
+    if (handbrakeState == State::CALIBRATION)
     {
         calibrationStartTime = millis;
     }
-    else if (state == State::USB)
+    else if (handbrakeState == State::USB)
     {
         hallMin = EepromReadByte(E2ADDR_HALL_MIN);
         hallMax = EepromReadByte(E2ADDR_HALL_MAX);
+        hallRemapScale = 255.0f / AbsDistance(hallMin, hallMax);
         Led2Blink();
         USBInit();
     }

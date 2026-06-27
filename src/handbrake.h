@@ -12,7 +12,4 @@ struct Report
 {
     u8 id;
     u8 brake;
-    //u8 x;
-    //u8 y;
-    //u8 buttons;
 };
