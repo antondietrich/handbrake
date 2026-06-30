@@ -3,9 +3,6 @@
 #include "usb_endpoint.h"
 #include "avr_common.h"
 
-
-static u8 gEP1Halt = 0;
-
 bool EP0_Setup()
 {
 	//Endpoint_ConfigureEndpoint(ENDPOINT_CONTROLEP, EP_TYPE_CONTROL, USB_Device_ControlEndpointSize, 1);
@@ -20,32 +17,37 @@ bool EP0_Setup()
     > TXINI is set when the bank is ready to accept a new IN packet. It shall be cleared by firmware to send the
     packet and to clear the endpoint bank.
     */
+    u8 ep = EP_CURRENT();
+    bool result = false;
     EP_SELECT(0);
-    //UERST |= _BV(EPRST0); // reset EP0
-    //UERST &= ~_BV(EPRST0);
+    UERST |= _BV(EPRST0); // reset EP0
+    UERST &= ~_BV(EPRST0);
 
     EP_ENABLE();
-    //ACTIVATE_EP(); EP0 always active
     UECFG0X = 0; // control EP
     UECFG1X = _BV(ALLOC); // 8 bytes, single bank, allocate
     UEIENX = 0;
 
     if (EP_IS_CONFIG_OK())
     {
-        return true;
+        result = true;
     }
 
-    return false;
+    EP_SELECT(ep);
+    return result;
 }
 
 bool IsEP0Configured()
 {
+    u8 ep = EP_CURRENT();
+    bool result = true;
     EP_SELECT(0);
-    if (!(UECONX & _BV(EPEN))) return false;
-    if (!(UECFG1X & _BV(ALLOC))) return false;
-    if (UECFG0X != 0) return false;
-    if (!EP_IS_CONFIG_OK()) return false;
-    return true;
+    if (!(UECONX & _BV(EPEN))) result = false;
+    if (!(UECFG1X & _BV(ALLOC))) result = false;
+    if (UECFG0X != 0) result = false;
+    if (!EP_IS_CONFIG_OK()) result = false;
+    EP_SELECT(ep);
+    return result;
 }
 
 void EP0_Send8(u8 value)
@@ -107,14 +109,15 @@ void EP0_SendBufferPgm(const u8* buffer, u16 size)
 
 bool EP1_Setup()
 {
+    u8 ep = EP_CURRENT();
+    bool result = false;
     EP_SELECT(1);
     EP_ENABLE();
 
     UERST |= _BV(EPRST1);
     UERST &= ~_BV(EPRST1);
 
-    //UECFG0X = (EP_TYPE_INTERRUPT | EP_DIR_IN);
-    UECFG0X = 0b11000001u;
+    UECFG0X = (EP_TYPE_INTERRUPT | EP_DIR_IN);
     UECFG1X = _BV(ALLOC);
     UEIENX = 0;
 
@@ -123,10 +126,11 @@ bool EP1_Setup()
 
     if (EP_IS_CONFIG_OK())
     {
-        return true;
+        result = true;
     }
 
-    return false;
+    EP_SELECT(ep);
+    return result;
 }
 
 void EP_Send8(u8 value)
@@ -149,6 +153,9 @@ void EP_SendBuffer(const u8* buffer, u16 size)
         while (size > 0 && bytesWritten < EP0_FIFO_SIZE_BYTES)
         {
             EP_WRITE_BYTE(*read++);
+            #if DEBUG
+            if ((UEINTX & RWAL) == 0) DEBUG_OUT(DEBUG_ERROR_BANK_FULL, true, true);
+            #endif
             ++bytesWritten;
             --size;
         }
@@ -159,18 +166,20 @@ void EP_SendBuffer(const u8* buffer, u16 size)
 
 bool IsEP1Configured()
 {
+    u8 ep = EP_CURRENT();
+    bool result = true;
     EP_SELECT(1);
-    if (!(UECONX & _BV(EPEN))) return false;
-    if (!(UECFG1X & _BV(ALLOC))) return false;
-    if (UECFG0X != (EP_TYPE_INTERRUPT | EP_DIR_IN)) return false;
-    if (!EP_IS_CONFIG_OK()) return false;
-    return true;
+    if (!(UECONX & _BV(EPEN))) result = false;
+    if (!(UECFG1X & _BV(ALLOC))) result = false;
+    if (UECFG0X != (EP_TYPE_INTERRUPT | EP_DIR_IN)) result = false;
+    if (!EP_IS_CONFIG_OK()) result = false;
+    EP_SELECT(ep);
+    return result;
 }
 
 void EP1_SetHalt()
 {
-    gEP1Halt = 1;
-    u8 ep = UENUM;
+    u8 ep = EP_CURRENT();
     EP_SELECT(1);
     EP_STALL_ENABLE();
     EP_SELECT(ep);
@@ -178,13 +187,16 @@ void EP1_SetHalt()
 
 bool EP1_IsHalted()
 {
-    return gEP1Halt == 1;
+    u8 ep = EP_CURRENT();
+    EP_SELECT(1);
+    bool isHalted = EP_IS_STALL_ENABLED();
+    EP_SELECT(ep);
+    return isHalted;
 }
 
 void EP1_ClearHalt()
 {
-    gEP1Halt = 0;
-    u8 ep = UENUM;
+    u8 ep = EP_CURRENT();
     EP_SELECT(1);
     EP_STALL_DISABLE();
     EP_RESET_DATA_TOGGLE();

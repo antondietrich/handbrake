@@ -64,6 +64,6 @@ const Configuration PROGMEM configuration = {
         .address                = (1 << 7) | 1,
         .attributes             = (u8)EPATTR_TransferType::Interrupt,
         .maxPacketSize          = 8,
-        .pollingInterval        = 200
+        .pollingInterval        = 30 
     }
 };

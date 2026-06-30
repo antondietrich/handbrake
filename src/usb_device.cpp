@@ -53,7 +53,6 @@
 #define USB_INT_SUSPEND_TRIGGERED()         (UDINT & (1 << SUSPI))
 #define USB_INT_RESET_TRIGGERED()           (UDINT & (1 << EORSTI))
 #define USB_INT_SOF_TRIGGERED()             (UDINT & (1 << SOFI))
-	
 
 #define REQUEST_INDEX_EP1                   (REQUEST_INDEX_ENDPOINT_DIRECTION_IN | 1)
 
@@ -63,6 +62,13 @@ static u8 gSelectedConfiguration = 0;
 static u8 gAddressPending = 0;
 static u8 gWasReset = 0;
 static u16 gHIDIdleTime = 0; // time in ms to repeat unchanged HID report
+
+enum class RequestProcessResult : u8
+{
+    HANDLED,
+    NOT_HANDLED,
+    ERROR
+};
 
 /* Unrecoverable error, will halt all further execution */
 void USBError(u8 err)
@@ -74,7 +80,7 @@ void USBError(u8 err)
         return;
     }
     gUSBState = USBDeviceState::ERROR;
-    DEBUG_OUT(err, true, true);
+    DEBUG_OUT(err, DEBUG_PRIORITY_ERROR, 1);
     Led1On();
     Led2On();
     
@@ -114,11 +120,11 @@ void USBInit()
 
 static void USBProcessSetupRequest();
 
-static void USB_DeviceTask(void)
+static void USBDeviceUpdate(void)
 {
+    EP_SELECT(0);
 	if (gUSBState < USBDeviceState::DEFAULT)
 	{
-        EP_SELECT(0);
         if (EP_IS_SETUP_RECEIVED())
         {
             USBError(DEBUG_ERROR_EARLY_RX);
@@ -126,67 +132,11 @@ static void USB_DeviceTask(void)
 		return;
 	}
 
-    //cli();
-	EP_SELECT(0);
 	if (EP_IS_SETUP_RECEIVED())
 	{
 		USBProcessSetupRequest();
 	}
-    //sei();
 }
-
-enum class RequestProcessResult : u8
-{
-    HANDLED,
-    NOT_HANDLED,
-    ERROR
-};
-
-
-// PACKET Structure
-//        lsb                    msb
-// TOKEN: [SYNC][PID][ADDR][EP][CRC][EOP]
-// SOF: [PID][FRAME_NUMBER][CRC] - every 1ms, no response from device
-// DATA: [PID][DATA][CRC]
-// HANDSHAKE: [PID]
-// PID - 4 bit type: TOKEN (OUT, IN, SOF, SETUP), DATA (DATA0, DATA1, DATA2*, MDATA*), HANDSHAKE (ACK, NAK, STALL, NYET*), SPECIAL
-// * - high-speed only
-// ACK can be issued by device for OUT, SETUP and PING transactions; by the host for IN transactions
-// NAK can be issued only by device for OUT-handshake (cannot accept data) and IN-data (no data to send)
-
-// Bulk IN Transfer:
-// OK: host:IN -> device:DATA -> host:ACK
-// No data: host:IN -> device:NAK
-// Halt: host:IN -> device:STALL
-
-// Bulk OUT Transfer:
-// host:OUT -> host:DATA -> device:ACK|NAK|STALL
-
-// Control Transfer:
-// 1. Setup stage (stage == transaction)
-//   [SETUP transfer][DATA0 transfer][ACK]
-//   device may not respond to SETUP with STALL or NAK
-// 2. Optional Data stage
-//   1 or more IN or OUT transactions (same as bulk)
-// 3. Status stage
-//   single 3-stage (same as bulk, always DATA1) IN or OUT transaction, opposite direction from Data stage (or IN if no data)
-
-// Control Write:
-// Setup: [h:SETUP][h:DATA0][d:ACK] Data: [h:OUT][h:DATA][d:ACK] Status: [h:IN][d:0-length DATA1 | STALL | NAK][h: ACK]
-// Control Read:
-// Setup: [h:SETUP][h:DATA0][d:ACK] Data: [h:IN][d:DATA][h:ACK] Status: [h:OUT][h:0-length DATA1][d: ACK | STALL | NAK]
-
-
-// DATA stage is complete when
-// exactly as many bytes as specified in the SETUP stage are transferred
-// a packet with payload smaller that MaxPacketSize or ZLP is transferred
-// If the endpoint receives a larger-than-expected data payload from the host, it halts the pipe.
-
-// If a Setup transaction is received by an endpoint before a previously initiated control transfer is completed,
-// the device must abort the current transfer/operation and handle the new control Setup transaction.
-
-// TODO: STATUS handling
-// The Status stage transfer is always in the opposite direction of the Data stage. If there is no Data stage, the Status stage is from the device to the host.
 
 static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& request)
 {
@@ -367,6 +317,9 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
             result = RequestProcessResult::HANDLED;
             EP1_ClearHalt();
             gUSBState = USBDeviceState::CONFIGURED;
+            TC0_INTERRUPTA_DISABLE();
+            USB_INT_SOF_CLEAR();
+            USB_INT_SOF_ENABLE();
             DEBUG_OUT(DEBUG_STAGE_CONFIGURED);
         } break;
 
@@ -408,7 +361,7 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
     return result;
 }
 
-RequestProcessResult USBProcessHIDRequest(const USBSetupRequest& request)
+static RequestProcessResult USBProcessHIDRequest(const USBSetupRequest& request)
 {
     RequestProcessResult result = RequestProcessResult::NOT_HANDLED;
     EP_CLEAR_SETUP_RECEIVED();
@@ -461,7 +414,8 @@ static void USBProcessSetupRequest()
 {
 	EP_SELECT(0);
     EP_STALL_DISABLE();
-    //DEBUG_OUT(DEBUG_STAGE_SETUP_REQUEST);
+    gWasReset = false;
+
     USBSetupRequest request = {0};
     u8* write = (u8*)(&request);
     // TODO: check that the FIFO contains the expected number of bytes
@@ -492,7 +446,6 @@ static void USBProcessSetupRequest()
         return;
     }
 
-    EP_SELECT(0); // just in case
     if (result == RequestProcessResult::NOT_HANDLED)
     {
         EP_STALL_ENABLE();
@@ -505,7 +458,6 @@ static void USBProcessSetupRequest()
         {
             if (gWasReset)
             {
-                gWasReset = 0;
                 return;
             }
             if (gUSBState <= USBDeviceState::POWERED)
@@ -521,7 +473,6 @@ static void USBProcessSetupRequest()
         {
             if (gWasReset)
             {
-                gWasReset = 0;
                 return;
             }
             if (gUSBState <= USBDeviceState::POWERED)
@@ -531,7 +482,6 @@ static void USBProcessSetupRequest()
         }
         EP0_ACK_OUT_PACKET();
     }
-
 
     if (gAddressPending)
     {
@@ -546,7 +496,7 @@ static void USBProcessSetupRequest()
         else
         {
             gUSBState = USBDeviceState::DEFAULT;
-            DEBUG_OUT(DEBUG_STAGE_DEFAULT, true);
+            DEBUG_OUT(DEBUG_STAGE_DEFAULT);
         }
     }
 }
@@ -564,7 +514,6 @@ ISR(USB_GEN_vect, ISR_BLOCK)
             DEBUG_OUT(DEBUG_STAGE_DEFAULT);
 
             EP0_Setup();
-            //EP1_Setup();
 
             if (!(PLLCSR & _BV(PLOCK))) USBError(DEBUG_ERROR_PLLLOCK);
             if (!(USBCON & _BV(USBE))) USBError(DEBUG_ERROR_USBE);
@@ -572,7 +521,6 @@ ISR(USB_GEN_vect, ISR_BLOCK)
             if ((UDCON & _BV(DETACH))) USBError(DEBUG_ERROR_ATTACH);
             if (!IsEP0Configured()) USBError(DEBUG_ERROR_EP_SETUP);
             // TODO: interrupt based comm?
-            //USBInterruptEnable(USBInterrupt::RX_SETUP);
             return;
         }
     }
@@ -580,6 +528,7 @@ ISR(USB_GEN_vect, ISR_BLOCK)
 	if (USB_INT_SOF_TRIGGERED())
 	{
         USB_INT_SOF_CLEAR();
+        TickAsync();
 	}
 
 	if (USB_INT_VBUS_CONNECT_TRIGGERED())
@@ -616,7 +565,7 @@ ISR(USB_GEN_vect, ISR_BLOCK)
             UDCON |= _BV(DETACH); // Detach the device
 			gUSBState = USBDeviceState::ATTACHED;
             USB_INT_RESET_DISABLE();
-            DEBUG_OUT(DEBUG_STAGE_ATTACHED, true);
+            DEBUG_OUT(DEBUG_STAGE_ATTACHED);
 
             return;
 		}
@@ -632,6 +581,9 @@ ISR(USB_GEN_vect, ISR_BLOCK)
             return;
         }
 
+        Led1On();
+        Led2Blink();
+
         USB_INT_SUSPEND_DISABLE();
         USB_INT_WAKE_UP_ENABLE();
         DEBUG_OUT(DEBUG_STAGE_SUSPENDED, true);
@@ -642,8 +594,6 @@ ISR(USB_GEN_vect, ISR_BLOCK)
 		USBCON |= _BV(FRZCLK);
 		USB_PLL_OFF();
         #endif
-
-        // TODO: mcu sleep mode
 	}
 
 	if (USB_INT_WAKE_UP_TRIGGERED())
@@ -655,6 +605,9 @@ ISR(USB_GEN_vect, ISR_BLOCK)
             return;
         }
 
+        Led1Off();
+        Led2Blink();
+
         USB_INT_WAKE_UP_DISABLE();
         USB_INT_SUSPEND_ENABLE();
 
@@ -662,7 +615,6 @@ ISR(USB_GEN_vect, ISR_BLOCK)
 
 		USB_PLL_ON();
 		while (!IS_PLL_LOCKED());
-
 		USBCON &= ~_BV(FRZCLK);
         #endif
 	}

@@ -4,10 +4,20 @@
 #include <avr/wdt.h>
 #include <avr/power.h>
 
+#if DEBUG
+#define DISPLAY_CLK F7
+#define DISPLAY_DIO F6
+#define AK_TM1637_SPEED AK_TM1637_SPEED_HIGH
+#define AK_TM1637_IMPLEMENTATION
+#include "ak_tm1637s.h"
+#endif
+
+#define FORCE_CALIBRATION_SUCCESS 1
+#define FORCE_SEND_REPORT 1
+
 #include "avr_common.h"
 #include "avr_debug.h"
 #include "avr_eeprom.h"
-#include "main.h"
 
 u32 led1time = 0;
 u32 led2time = 0;
@@ -17,6 +27,10 @@ void Led1On();
 void Led2On();
 void Led1Blink();
 void Led2Blink();
+
+#define TC0_INTERRUPTA_ENABLE() 	TIMSK0 = _BV(OCIE0A)
+#define TC0_INTERRUPTA_DISABLE() 	TIMSK0 = 0
+void TickAsync();
 
 #include "handbrake.h"
 #include "descriptors.cpp"
@@ -30,6 +44,7 @@ enum class State : u8
     USB
 };
 
+void SetupHardware();
 void EnterState(State newState);
 
 static State handbrakeState = State::STARTUP;
@@ -42,37 +57,32 @@ static u8 hallMax = 0;
 static float hallRemapScale = 1;
 static u32 calibrationStartTime = 0;
 static u8 lastHall = 0;
-static u8 lastReportTime = 0;
+static u32 lastReportTime = 0;
 static u8 hallMinDeadzone = 1;
 
-ISR(TIMER0_COMPA_vect)
+void TickAsync()
 {
 	++millis;
 	if (millis % 1000 == 0)
 	{
 		++seconds;
-        if (handbrakeState == State::CALIBRATION)
-        {
-            Led2Blink();
-        }
 	}
+}
 
-    if (millis == led1time)
-    {
-        led1time = 0;
-        Led1Off();
-    }
-
-    if (millis == led2time)
-    {
-        led2time = 0;
-        Led2Off();
-    }
+ISR(TIMER0_COMPA_vect)
+{
+    TickAsync();
 }
 
 int main(void)
 {
 	SetupHardware();
+
+#if DEBUG
+    TM1637::Init();
+    TM1637::Clear();
+    TM1637::SetBrightness(1);
+#endif
 
     Led1Off();
     Led2Off();
@@ -92,14 +102,56 @@ int main(void)
 
     u8 hallCount = 0;
     u16 hallStartSum = 0;
+    u32 lastUpdateTime = 0;
+    u8 sleepMS = 4;
+    u16 calibrationBlinkTime = 0;
+
+    set_sleep_mode(SLEEP_MODE_IDLE);
 
 	for (;;)
 	{
+        /* Process Sleep */
+        cli();
+        if (millis - lastUpdateTime < sleepMS)
+        {
+            sleep_enable();
+            sei();
+            sleep_cpu();
+            sleep_disable();
+            continue;
+        }
+        sei();
+
+        lastUpdateTime = millis;
+
+        /* Update LEDs */
+        if (led1time != 0 && millis >= led1time)
+        {
+            Led1Off();
+        }
+
+        if (led2time != 0 && millis >= led2time)
+        {
+            Led2Off();
+        }
+
+        /* Read Hall Sensor*/
+        ADCSRA |= _BV(ADSC); // start conversion, wait till it's 0 to complete
+        while (ADCSRA & _BV(ADSC));
+        hall = ADCH;
+
+        /* Main Update */
         if (handbrakeState == State::CALIBRATION)
         {
+            if (millis - calibrationBlinkTime >= 1000)
+            {
+                calibrationBlinkTime = millis;
+                Led2Blink();
+            }
+
             if (millis - calibrationStartTime > 5000)
             {
-                if (AbsDistance(hallMin, hallMax) > 64)
+                if (AbsDistance(hallMin, hallMax) > 64 || FORCE_CALIBRATION_SUCCESS)
                 {
                     EepromWriteByte(1, E2ADDR_CALIBRATION_DONE);
                     EepromWriteByte(hallMin, E2ADDR_HALL_MIN);
@@ -112,15 +164,11 @@ int main(void)
                 {
                     Led1On();
                     Led2On();
-                    DEBUG_OUT(DEBUG_ERROR_CALIBRATION);
+                    DEBUG_OUT(DEBUG_ERROR_CALIBRATION, DEBUG_PRIORITY_ERROR, 1);
                     cli();
                     return 1;
                 }
             }
-
-            ADCSRA |= _BV(ADSC); // start conversion, wait till it's 0 to complete
-            while (ADCSRA & _BV(ADSC));
-            hall = ADCH;
 
             if (hallCount < 10)
             {
@@ -143,13 +191,9 @@ int main(void)
         }
         else if (handbrakeState == State::USB)
         {
-            USB_DeviceTask();
+            USBDeviceUpdate();
             if (gUSBState == USBDeviceState::CONFIGURED && !EP1_IsHalted())
             {
-                ADCSRA |= _BV(ADSC); // start conversion, wait till it's 0 to complete
-                while (ADCSRA & _BV(ADSC));
-                hall = ADCH;
-
                 u8 reportChanged = 0;
 
                 if (hallMax > hallMin)
@@ -173,18 +217,22 @@ int main(void)
                     reportChanged = AbsDistance(hall, lastHall) > 1;
                 }
 
-                if (reportChanged || (gHIDIdleTime > 0 && (millis - lastReportTime) > gHIDIdleTime))
+                if (reportChanged || (gHIDIdleTime > 0 && (millis - lastReportTime) > gHIDIdleTime) || FORCE_SEND_REPORT)
                 {
                     EP_SELECT(1); 
-                    while (!EP_IS_IN_BANK_READY());
+                    if (EP_IS_IN_BANK_READY())
+                    {
+                        u32 elapsed = millis - lastReportTime;
+                        //DEBUG_OUT((u16)(elapsed), DEBUG_PRIORITY_MIN + 2);
+                        lastReportTime = millis;
 
-                    lastHall = hall;
-                    lastReportTime = millis;
-                    u8 brake = (u8)(AbsDistance(hall, hallMin) * hallRemapScale);
-                    Report report;
-                    report.id = 1;
-                    report.brake = brake;
-                    EP_SendBuffer((u8*)&report, sizeof(Report));
+                        lastHall = hall;
+                        u8 brake = (u8)(AbsDistance(hall, hallMin) * hallRemapScale);
+                        Report report;
+                        report.id = 1;
+                        report.brake = brake;
+                        EP_SendBuffer((u8*)&report, sizeof(Report));
+                    }
                 }
             }
         }
@@ -214,16 +262,7 @@ void SetupHardware(void)
 	TCCR0A |= _BV(WGM01); // CTC mode - count up to OCR0A and reset
 	TCCR0B |= _BV(CS01) | _BV(CS00); // 1/64 prescaler
 	TCNT0 = 0;
-	TIMSK0 |= _BV(OCIE0A); // compare match A interrupt enabled
-
-    /* Set T/C1 output A as PWM output on PB5 (Digital 9) */
-#if DEBUG
-    DDRB |= _BV(PB5);
-    TCCR1A = _BV(COM1A1) | _BV(WGM10); // phase-correct non-inverting 8bit PWM
-    TCCR1B =  _BV(CS10);
-    TCNT1 = 0;
-    OCR1A = 3;
-#endif
+    TC0_INTERRUPTA_ENABLE();
 
 	/* Set up ADC */
 	// ADMUX - voltage ref, gain
@@ -246,21 +285,25 @@ void SetupHardware(void)
 void Led1Off()
 {
 	PORTD |= (1 << PD5);
+    led1time = 0;
 }
 
 void Led2Off()
 {
 	PORTB |= (1 << PB0);
+    led2time = 0;
 }
 
 void Led1On() 
 {
 	PORTD &= ~(1 << PD5);
+    led1time = 0;
 }
 
 void Led2On()
 {
 	PORTB &= ~(1 << PB0);
+    led2time = 0;
 }
 
 void Led1Blink() 
@@ -293,7 +336,6 @@ void EnterState(State newState)
         hallMin = EepromReadByte(E2ADDR_HALL_MIN);
         hallMax = EepromReadByte(E2ADDR_HALL_MAX);
         hallRemapScale = 255.0f / AbsDistance(hallMin, hallMax);
-        Led2Blink();
         USBInit();
     }
 }

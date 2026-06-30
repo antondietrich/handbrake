@@ -1,11 +1,13 @@
 #pragma once
 
 #define EP_SELECT(idx)                  UENUM = ((idx) & 0b111)
+#define EP_CURRENT()                    (UENUM & 0b111)
 #define EP_ENABLE()                     UECONX |= _BV(EPEN)
 #define EP_IS_CONFIG_OK()               (UESTA0X & _BV(CFGOK))
 
 #define EP_IS_IN_BANK_READY()           (UEINTX & _BV(TXINI))
-#define EP_SEND_IN_PACKET()             UEINTX &= ~(_BV(TXINI) | _BV(FIFOCON))
+//#define EP_SEND_IN_PACKET()             UEINTX &= ~(_BV(TXINI) | _BV(FIFOCON))
+#define EP_SEND_IN_PACKET()             UEINTX &= ~_BV(TXINI); UEINTX &= ~_BV(FIFOCON)
 #define EP0_SEND_IN_PACKET()            UEINTX &= ~_BV(TXINI)
 #define EP0_FIFO_SIZE_BYTES             8
 
@@ -14,6 +16,7 @@
 #define EP0_ACK_OUT_PACKET()            UEINTX &= ~_BV(RXOUTI)
 #define EP_STALL_ENABLE()               UECONX |= _BV(STALLRQ)
 #define EP_STALL_DISABLE()              UECONX |= _BV(STALLRQC)
+#define EP_IS_STALL_ENABLED()           (UECONX & _BV(STALLRQ))
 #define EP_RESET_DATA_TOGGLE()          UECONX |= _BV(RSTDT)
 
 #define EP_TYPE_CONTROL                 0x0

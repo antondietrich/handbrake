@@ -1,7 +1,7 @@
 #pragma once
 
+#include "avr_common.h"
 
-#if DEBUG
 enum DEBUG_STAGE
 {
     DEBUG_STAGE_START           = 0,
@@ -32,26 +32,33 @@ enum DEBUG_STAGE
     DEBUG_ERROR_INVALID_REQUEST    = 61,
     DEBUG_ERROR_UNKNOWN_REQUEST    = 62,
     DEBUG_ERROR_CALIBRATION        = 63,
+    DEBUG_ERROR_BANK_FULL          = 64,
+
 };
 
-u8 gDebugOutLatched = 0;
-//#define DEBUG_OUT(n) if (((n) * 25 + 5) > OCR1A && (n) <= DEBUG_STAGE_ERROR) OCR1A = (n) * 25 + 5
-//#define DEBUG_OUT(n, l) if (!gDebugOutLatched)      \
-{                                                   \
-    OCR1A = (n) * 13;                               \
-    if (l) gDebugOutLatched = 1;                    \
-}
-
-void DEBUG_OUT(u8 n, bool force = false, bool latch = false)
+enum DEBUG_PRIORITY
 {
-    if (gDebugOutLatched)
+    DEBUG_PRIORITY_MIN = 0,
+
+    DEBUG_PRIORITY_ERROR = 127,
+
+    DEBUG_PRIORITY_MAX = 255
+};
+
+#if DEBUG
+u8 gDebugOutLatched = 0;
+u8 gDebugMinPriority = 2;
+
+void DEBUG_OUT(u16 n, u8 priority = 0, u8 latch = 0)
+{
+    if (priority < gDebugMinPriority)
     {
         return;
     }
 
-    if (n >= DEBUG_ERROR_GENERIC)
+    if (gDebugOutLatched)
     {
-        latch = true;
+        return;
     }
 
     if (latch)
@@ -59,13 +66,9 @@ void DEBUG_OUT(u8 n, bool force = false, bool latch = false)
         gDebugOutLatched = 1;
     }
 
-    u8 ocr = (u8)((n) * 2.55f);
-    if (force || ocr > OCR1A)
-    {
-        OCR1A = ocr;
-    }
+    TM1637::DisplayNumber(n);
 }
 
 #else
-void DEBUG_OUT(u8 n, bool force = false, bool latch = false) {}
+#define DEBUG_OUT(n, f, l)
 #endif
