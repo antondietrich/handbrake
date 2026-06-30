@@ -110,8 +110,6 @@ void USBInit()
     gUSBState = USBDeviceState::ATTACHED;
     DEBUG_OUT(DEBUG_STAGE_ATTACHED);
 
-    USB_INT_SUSPEND_CLEAR();
-    USB_INT_SUSPEND_ENABLE();
     USB_INT_VBUS_CONNECT_ENABLE();
     USB_INT_RESET_ENABLE();
 
@@ -320,6 +318,8 @@ static RequestProcessResult USBProcessStandardRequest(const USBSetupRequest& req
             TC0_INTERRUPTA_DISABLE();
             USB_INT_SOF_CLEAR();
             USB_INT_SOF_ENABLE();
+            USB_INT_SUSPEND_CLEAR();
+            USB_INT_SUSPEND_ENABLE();
             DEBUG_OUT(DEBUG_STAGE_CONFIGURED);
         } break;
 
@@ -575,7 +575,7 @@ ISR(USB_GEN_vect, ISR_BLOCK)
 	{
         USB_INT_SUSPEND_CLEAR();
 
-        #if 0
+        #if 1
         if (gUSBState == USBDeviceState::SUSPENDED)
         {
             return;
@@ -586,7 +586,7 @@ ISR(USB_GEN_vect, ISR_BLOCK)
 
         USB_INT_SUSPEND_DISABLE();
         USB_INT_WAKE_UP_ENABLE();
-        DEBUG_OUT(DEBUG_STAGE_SUSPENDED, true);
+        DEBUG_OUT(DEBUG_STAGE_SUSPENDED);
 
         gUSBStateBeforeSuspend = gUSBState;
 		gUSBState = USBDeviceState::SUSPENDED;
@@ -599,7 +599,7 @@ ISR(USB_GEN_vect, ISR_BLOCK)
 	if (USB_INT_WAKE_UP_TRIGGERED())
 	{
         USB_INT_WAKE_UP_CLEAR();
-        #if 0
+        #if 1
         if (gUSBState != USBDeviceState::SUSPENDED)
         {
             return;

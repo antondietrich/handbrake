@@ -12,8 +12,8 @@
 #include "ak_tm1637s.h"
 #endif
 
-#define FORCE_CALIBRATION_SUCCESS 1
-#define FORCE_SEND_REPORT 1
+#define FORCE_CALIBRATION_SUCCESS 0
+#define FORCE_SEND_REPORT 0
 
 #include "avr_common.h"
 #include "avr_debug.h"

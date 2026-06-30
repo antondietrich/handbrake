@@ -47,7 +47,7 @@ enum DEBUG_PRIORITY
 
 #if DEBUG
 u8 gDebugOutLatched = 0;
-u8 gDebugMinPriority = 2;
+u8 gDebugMinPriority = 0;
 
 void DEBUG_OUT(u16 n, u8 priority = 0, u8 latch = 0)
 {
