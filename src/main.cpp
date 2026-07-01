@@ -41,7 +41,8 @@ enum class State : u8
 {
     STARTUP,
     CALIBRATION,
-    USB
+    USB,
+    RESET_CALIBRATION,
 };
 
 void SetupHardware();
@@ -93,10 +94,6 @@ int main(void)
     {
         EnterState(State::CALIBRATION);
     }
-    else
-    {
-        EnterState(State::USB);
-    }
 
 	sei();
 
@@ -141,7 +138,24 @@ int main(void)
         hall = ADCH;
 
         /* Main Update */
-        if (handbrakeState == State::CALIBRATION)
+        if (handbrakeState == State::STARTUP)
+        {
+            cli();
+            hallMin = EepromReadByte(E2ADDR_HALL_MIN);
+            hallMax = EepromReadByte(E2ADDR_HALL_MAX);
+            hallRemapScale = 255.0f / AbsDistance(hallMin, hallMax);
+            sei();
+            if (AbsDistance(hall, hallMin) > 32)
+            {
+                EnterState(State::RESET_CALIBRATION);
+            }
+            else
+            {
+                EnterState(State::USB);
+                continue;
+            }
+        }
+        else if (handbrakeState == State::CALIBRATION)
         {
             if (millis - calibrationBlinkTime >= 1000)
             {
@@ -153,10 +167,11 @@ int main(void)
             {
                 if (AbsDistance(hallMin, hallMax) > 64 || FORCE_CALIBRATION_SUCCESS)
                 {
+                    cli();
                     EepromWriteByte(1, E2ADDR_CALIBRATION_DONE);
                     EepromWriteByte(hallMin, E2ADDR_HALL_MIN);
                     EepromWriteByte(hallMax, E2ADDR_HALL_MAX);
-                    Led1Blink();
+                    sei();
                     EnterState(State::USB);
                     continue;
                 }
@@ -166,7 +181,7 @@ int main(void)
                     Led2On();
                     DEBUG_OUT(DEBUG_ERROR_CALIBRATION, DEBUG_PRIORITY_ERROR, 1);
                     cli();
-                    return 1;
+                    sleep_mode();
                 }
             }
 
@@ -332,9 +347,16 @@ void EnterState(State newState)
     }
     else if (handbrakeState == State::USB)
     {
-        hallMin = EepromReadByte(E2ADDR_HALL_MIN);
-        hallMax = EepromReadByte(E2ADDR_HALL_MAX);
-        hallRemapScale = 255.0f / AbsDistance(hallMin, hallMax);
+        Led1Off();
+        Led2Off();
         USBInit();
+    }
+    else if (handbrakeState == State::RESET_CALIBRATION)
+    {
+        cli();
+        EepromWriteByte(0, E2ADDR_CALIBRATION_DONE);
+        Led1On();
+        Led2On();
+        sleep_mode();
     }
 }
