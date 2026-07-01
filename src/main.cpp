@@ -223,7 +223,6 @@ int main(void)
                     if (EP_IS_IN_BANK_READY())
                     {
                         u32 elapsed = millis - lastReportTime;
-                        //DEBUG_OUT((u16)(elapsed), DEBUG_PRIORITY_MIN + 2);
                         lastReportTime = millis;
 
                         lastHall = hall;

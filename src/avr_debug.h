@@ -70,5 +70,5 @@ void DEBUG_OUT(u16 n, u8 priority = 0, u8 latch = 0)
 }
 
 #else
-#define DEBUG_OUT(n, f, l)
+#define DEBUG_OUT(n, ...)
 #endif
